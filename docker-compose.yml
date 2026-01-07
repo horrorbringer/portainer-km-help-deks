@@ -42,7 +42,7 @@ services:
     container_name: km-help-desk-nginx
     restart: unless-stopped
     ports:
-      - "${APP_PORT:-8080}:80"
+      - "${APP_PORT:-8081}:80"
       - "${HTTPS_PORT:-8443}:443"
     volumes:
       - km-help-desk-nginx-config:/etc/nginx/conf.d:ro
