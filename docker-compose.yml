@@ -1,0 +1,179 @@
+version: '3.8'
+
+services:
+  # Laravel Application (from Docker Hub)
+  app:
+    image: vanny3333/km-help-desk:latest
+    container_name: km-help-desk-app
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - km-help-desk-env:/var/www/html/.env:ro
+      - km-help-desk-storage:/var/www/html/storage
+      - km-help-desk-cache:/var/www/html/bootstrap/cache
+    networks:
+      - km-help-desk-network
+    depends_on:
+      - db
+      - redis
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - DB_CONNECTION=mysql
+      - DB_HOST=db
+      - DB_DATABASE=${DB_DATABASE:-kimmix_cms}
+      - DB_USERNAME=${DB_USERNAME:-kimmix_user}
+      - DB_PASSWORD=${DB_PASSWORD:-kimmix_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUEUE_CONNECTION=redis
+      - CACHE_DRIVER=redis
+      - SESSION_DRIVER=redis
+    healthcheck:
+      test: ["CMD", "php", "-r", "echo 'OK';"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Nginx Web Server
+  nginx:
+    image: nginx:alpine
+    container_name: km-help-desk-nginx
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    volumes:
+      - km-help-desk-nginx-config:/etc/nginx/conf.d:ro
+      - km-help-desk-storage-public:/var/www/html/storage/app/public:ro
+    networks:
+      - km-help-desk-network
+    depends_on:
+      app:
+        condition: service_started
+
+  # MySQL Database
+  db:
+    image: mysql:8.0
+    container_name: km-help-desk-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_DATABASE=${DB_DATABASE:-kimmix_cms}
+      - MYSQL_USER=${DB_USERNAME:-kimmix_user}
+      - MYSQL_PASSWORD=${DB_PASSWORD:-kimmix_password}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root_password}
+    volumes:
+      - km-help-desk-db:/var/lib/mysql
+    networks:
+      - km-help-desk-network
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Redis Cache & Queue
+  redis:
+    image: redis:alpine
+    container_name: km-help-desk-redis
+    restart: unless-stopped
+    volumes:
+      - km-help-desk-redis:/data
+    networks:
+      - km-help-desk-network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Queue Worker
+  queue:
+    image: vanny3333/km-help-desk:latest
+    container_name: km-help-desk-queue
+    restart: unless-stopped
+    working_dir: /var/www/html
+    command: php artisan queue:work redis --sleep=3 --tries=3 --max-time=3600
+    volumes:
+      - km-help-desk-env:/var/www/html/.env:ro
+      - km-help-desk-storage:/var/www/html/storage
+    networks:
+      - km-help-desk-network
+    depends_on:
+      redis:
+        condition: service_started
+      db:
+        condition: service_started
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - DB_CONNECTION=mysql
+      - DB_HOST=db
+      - DB_DATABASE=${DB_DATABASE:-kimmix_cms}
+      - DB_USERNAME=${DB_USERNAME:-kimmix_user}
+      - DB_PASSWORD=${DB_PASSWORD:-kimmix_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUEUE_CONNECTION=redis
+      - CACHE_DRIVER=redis
+      - SESSION_DRIVER=redis
+
+  # Scheduler (Cron)
+  scheduler:
+    image: vanny3333/km-help-desk:latest
+    container_name: km-help-desk-scheduler
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - km-help-desk-env:/var/www/html/.env:ro
+      - km-help-desk-storage:/var/www/html/storage
+    networks:
+      - km-help-desk-network
+    depends_on:
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - DB_CONNECTION=mysql
+      - DB_HOST=db
+      - DB_DATABASE=${DB_DATABASE:-kimmix_cms}
+      - DB_USERNAME=${DB_USERNAME:-kimmix_user}
+      - DB_PASSWORD=${DB_PASSWORD:-kimmix_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUEUE_CONNECTION=redis
+      - CACHE_DRIVER=redis
+      - SESSION_DRIVER=redis
+    command: >
+      sh -c "while true; do
+        php artisan schedule:run --verbose --no-interaction &
+        sleep 60
+      done"
+
+volumes:
+  km-help-desk-db:
+    driver: local
+  km-help-desk-redis:
+    driver: local
+  km-help-desk-storage:
+    driver: local
+  km-help-desk-cache:
+    driver: local
+  km-help-desk-env:
+    driver: local
+  km-help-desk-storage-public:
+    driver: local
+  km-help-desk-nginx-config:
+    driver: local
+
+networks:
+  km-help-desk-network:
+    driver: bridge
+
